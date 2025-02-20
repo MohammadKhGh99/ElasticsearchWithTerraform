@@ -107,11 +107,19 @@ resource "aws_route_table_association" "private_assoc" {
 
 # EC2s - 1.1
 resource "aws_instance" "public_instance" {
-  vpc_security_group_ids = [aws_security_group.cluster_security_group.id]
+  vpc_security_group_ids = [aws_security_group.public_instance_sg.id]
   ami = var.ec2_ami
   key_name = var.key_pair
   subnet_id = aws_subnet.public_subnet.id
   instance_type = "t2.micro"
+
+  user_data = base64encode(<<-EOF
+              #!/bin/bash
+              echo "AllowAgentForwarding yes" | sudo tee -a /etc/ssh/sshd_config
+              echo "GatewayPorts yes" | sudo tee -a /etc/ssh/sshd_config
+              sudo systemctl restart sshd
+              EOF
+  )
 
   tags = {
     Terraform = true
@@ -192,29 +200,53 @@ resource "aws_autoscaling_policy" "scale_up" {
   autoscaling_group_name = aws_autoscaling_group.data-nodes.name
 }
 
-resource "aws_security_group" "cluster_security_group" {
-  name = "cluster_security_group"
-  description = "Allow communication only within cluster"
+resource "aws_security_group" "public_instance_sg" {
+  name = "public_instance_sg"
+  description = "Allow ssh communication from public IPs"
   vpc_id = aws_vpc.private-vpc.id
-
-  ingress {
-    from_port = 9200
-    to_port = 9200
-    protocol = "tcp"
-  }
-
-  ingress {
-    from_port = 9300
-    to_port = 9300
-    protocol = "tcp"
-  }
 
   ingress {
     from_port = 22
     to_port = 22
     protocol = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "public_instance_sg"
+  }
+}
+
+resource "aws_security_group" "cluster_security_group" {
+  name = "cluster_security_group"
+  description = "Allow communication only within cluster"
+  vpc_id = aws_vpc.private-vpc.id
+
+  # ingress {
+  #   from_port = 9200
+  #   to_port = 9200
+  #   protocol = "tcp"
+  # }
+
+  # ingress {
+  #   from_port = 9300
+  #   to_port = 9300
+  #   protocol = "tcp"
+  # }
+
+  # ingress {
+  #   from_port = 22
+  #   to_port = 22
+  #   protocol = "tcp"
+  #   cidr_blocks = ["10.0.0.0/16"]
+  # }
 
   # If there is a need for external access
   egress {
@@ -227,4 +259,13 @@ resource "aws_security_group" "cluster_security_group" {
   tags = {
     Name = "Elasticsearch-cluster-sg"
   }
+}
+
+resource "aws_security_group_rule" "allow_ssh_from_public_instance" {
+  type                     = "ingress"
+  from_port                = 22
+  to_port                  = 22
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.public_instance_sg.id
+  security_group_id        = aws_security_group.cluster_security_group.id
 }
