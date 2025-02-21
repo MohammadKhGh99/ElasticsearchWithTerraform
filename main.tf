@@ -54,6 +54,10 @@ resource "aws_internet_gateway" "elasticsearch_igw" {
 
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
+
+  tags = {
+    Name = "nat_eip"
+  }
 }
 
 # NAT Gateway
@@ -62,8 +66,10 @@ resource "aws_nat_gateway" "my_nat" {
   subnet_id     = aws_subnet.public_subnet.id
 
   tags = {
-    Name = "NAT Gateway"
+    Name = "my_nat"
   }
+
+  depends_on = [aws_internet_gateway.elasticsearch_igw]
 }
 
 # Public Route Table
@@ -113,13 +119,14 @@ resource "aws_instance" "public_instance" {
   subnet_id = aws_subnet.public_subnet.id
   instance_type = "t2.micro"
 
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              echo "AllowAgentForwarding yes" | sudo tee -a /etc/ssh/sshd_config
-              echo "GatewayPorts yes" | sudo tee -a /etc/ssh/sshd_config
-              sudo systemctl restart sshd
-              EOF
-  )
+  # user_data = base64encode(<<-EOF
+  #             #!/bin/bash
+  #             sudo apt-get update
+  #             wget -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb
+  #             wget -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb.sha512
+  #             shasum -a 512 -c elasticsearch-8.17.2-amd64.deb.sha512 
+  #             EOF
+  # )
 
   tags = {
     Terraform = true
@@ -130,10 +137,14 @@ resource "aws_launch_template" "data-nodes-lt" {
   name_prefix = "data-node"
 
   image_id = var.ec2_ami
-  instance_type = "t2.micro"
+  instance_type = "t2.medium"
   vpc_security_group_ids = [aws_security_group.cluster_security_group.id]
   ebs_optimized = true
   key_name = var.key_pair
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_elasticsearch_instance_profile.name
+  }
 
   block_device_mappings {
     device_name = "/dev/sda1"
@@ -144,23 +155,7 @@ resource "aws_launch_template" "data-nodes-lt" {
     }
   }
 
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              sudo apt-get update
-              wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb
-              wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb.sha512
-              shasum -a 512 -c elasticsearch-8.17.2-amd64.deb.sha512 
-              sudo dpkg -i elasticsearch-8.17.2-amd64.deb
-              wget https://artifacts.elastic.co/downloads/kibana/kibana-8.17.2-amd64.deb
-              shasum -a 512 kibana-8.17.2-amd64.deb 
-              sudo dpkg -i kibana-8.17.2-amd64.deb
-              sudo systemctl daemon-reload
-              sudo systemctl enable elasticsearch
-              sudo systemctl start elasticsearch
-              sudo systemctl enable kibana.service
-              sudo systemctl start kibana.service
-              EOF
-  )
+  user_data = base64encode(file("${path.module}/user-data.sh"))
 
   tags = {
     Terraform = true
@@ -172,6 +167,47 @@ resource "aws_launch_template" "data-nodes-lt" {
         Name = "ASG-data-node"
     }
   }
+}
+
+resource "aws_iam_role" "ec2_elasticsearch_role" {
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_policy" "ec2_elasticsearch_policy" {
+  name        = "EC2ElasticsearchPolicy"
+  description = "Allow EC2 instances to query other instances for Elasticsearch discovery"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_policy" {
+  role       = aws_iam_role.ec2_elasticsearch_role.name
+  policy_arn = aws_iam_policy.ec2_elasticsearch_policy.arn
+}
+
+resource "aws_iam_instance_profile" "ec2_elasticsearch_instance_profile" {
+  name = "ec2-elasticsearch-instance-profile"
+  role = aws_iam_role.ec2_elasticsearch_role.name
 }
 
 # Auto Scaling Group - 1.2
@@ -192,11 +228,28 @@ resource "aws_autoscaling_group" "data-nodes" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "high-cpu-usage"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 70
+  alarm_description   = "Alarm when CPU exceeds 70%"
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.data-nodes.name
+  }
+  actions_enabled     = true
+  alarm_actions       = [aws_autoscaling_policy.scale_up.arn]
+}
+
 resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale-up"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
+  cooldown               = 120
   autoscaling_group_name = aws_autoscaling_group.data-nodes.name
 }
 
@@ -241,12 +294,13 @@ resource "aws_security_group" "cluster_security_group" {
   #   protocol = "tcp"
   # }
 
-  # ingress {
-  #   from_port = 22
-  #   to_port = 22
-  #   protocol = "tcp"
-  #   cidr_blocks = ["10.0.0.0/16"]
-  # }
+  ingress {
+    from_port = 22
+    to_port = 22
+    protocol = "tcp"
+    security_groups = [aws_security_group.public_instance_sg.id]
+    cidr_blocks = ["10.0.0.0/16"]
+  }
 
   # If there is a need for external access
   egress {
@@ -261,11 +315,11 @@ resource "aws_security_group" "cluster_security_group" {
   }
 }
 
-resource "aws_security_group_rule" "allow_ssh_from_public_instance" {
-  type                     = "ingress"
-  from_port                = 22
-  to_port                  = 22
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.public_instance_sg.id
-  security_group_id        = aws_security_group.cluster_security_group.id
-}
+# resource "aws_security_group_rule" "allow_ssh_from_public_instance" {
+#   type                     = "ingress"
+#   from_port                = 22
+#   to_port                  = 22
+#   protocol                 = "tcp"
+#   source_security_group_id = aws_security_group.public_instance_sg.id
+#   security_group_id        = aws_security_group.cluster_security_group.id
+# }
