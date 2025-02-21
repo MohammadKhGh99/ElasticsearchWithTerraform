@@ -9,11 +9,11 @@ Our task is to modify this setup and implement a scalable Elasticsearch cluster 
 - **Deploy a Highly Available Elasticsearch Cluster**
   - To meet this requirement, I made an **Auto Scaling Group** which have 2 as minimum number of instances and 5 as maximum number of instances, and the desired capacity in realtime is 3 as required, they deployed in **3 different availability zones**.
   - If there is a high usage of cpu the ASG scale up, and if we want to scale up or down manually we can just modify the **desired_capacity in the main.tf file** to whatever number we want but not smaller that the minimum and not bigger than the maximum.
-- Ensure Secure & Optimized Deployment
+- **Ensure Secure & Optimized Deployment**
   - For security, a private VPC with no public access has been made.
   - For more Security, a security group that allow only communications within the cluster has been made and attched to the nodes.
   - For optimization, we should use the EBS optimization with GP3 storage to ensure perfect performance.
-- Automate Cluster Configuration
+- **Automate Cluster Configuration**
   - All this made with an IaC terraform to easily handle AWS services we want.
   - Elasticsearch node discovery has been made by collecting the private IPs of all the nodes that elasticsearch run on them and save them as the nodes that combine the cluster in each time a new node been created.
   - Running Elasticsearch handled by systemd to enable running the service when the node created automatically.
