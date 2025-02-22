@@ -15,7 +15,7 @@ Our task is to modify this setup and implement a scalable Elasticsearch cluster 
   - For optimization, we should use the EBS optimization with GP3 storage to ensure perfect performance.
 - **Automate Cluster Configuration**
   - All this made with an IaC terraform to easily handle AWS services we want.
-  - Elasticsearch node discovery has been made by collecting the private IPs of all the nodes that elasticsearch run on them and save them as the nodes that combine the cluster in each time a new node been created.
+  - Elasticsearch node discovery has been made by collecting the private IPs of all the nodes that elasticsearch run on them and save them as the nodes that combine the cluster in each time a new node been created, this made by cron job to run every 5 minutes.
   - Running Elasticsearch handled by systemd to enable running the service when the node created automatically.
 
 ## Prerequisites
@@ -93,6 +93,7 @@ To deploy the Elasticsearch cluster, follow the steps in the [Setup](#setup) sec
 
 Elasticsearch nodes discover each other by adding the private EC2 IPs in "discovery.seed_hosts" field to the file "/etc/elasticsearch/elasticsearch.yml" when each private EC2 created, they added by default by the user data file.
 This has been made by using describe-instances command from aws cli.
+Every 5 minutes there is a script run in private nodes to discover all nodes.
 
 ## Scaling Data Nodes
 

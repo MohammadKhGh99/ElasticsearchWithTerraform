@@ -8,20 +8,19 @@ apt update -y
 apt install -y unzip
 
 # java
-sudo apt update -y
-sudo apt install -y openjdk-11-jdk
+apt install -y openjdk-11-jdk
 
 # download and install aws
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
+unzip -q awscliv2.zip
 ./aws/install
 # remove redundant installation files
 rm awscliv2.zip
 rm -rf aws
 
 # download elasticsearch
-wget -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb
-wget -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb.sha512
+wget -q -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb
+wget -q -c https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.17.2-amd64.deb.sha512
 shasum -a 512 -c elasticsearch-8.17.2-amd64.deb.sha512 
 # install elasticsearch
 dpkg -i elasticsearch-8.17.2-amd64.deb
@@ -29,7 +28,7 @@ dpkg -i elasticsearch-8.17.2-amd64.deb
 rm elasticsearch-8.17.2-amd64.deb
 
 # download kibana
-wget -c https://artifacts.elastic.co/downloads/kibana/kibana-8.17.2-amd64.deb
+wget -q -c https://artifacts.elastic.co/downloads/kibana/kibana-8.17.2-amd64.deb
 shasum -a 512 kibana-8.17.2-amd64.deb 
 # install kibana
 dpkg -i kibana-8.17.2-amd64.deb
@@ -67,7 +66,7 @@ cp /etc/elasticsearch/certs/http_ca.crt /usr/local/share/ca-certificates/
 update-ca-certificates
 
 # Update Elasticsearch config
-sudo bash -c "cat > /etc/elasticsearch/elasticsearch.yml <<EOL
+bash -c "cat > /etc/elasticsearch/elasticsearch.yml <<EOL
 cluster.name: my-cluster
 node.name: $INSTANCE_ID
 path.data: /var/lib/elasticsearch
@@ -89,11 +88,11 @@ http.host: 0.0.0.0
 EOL"
 
 # enable and start the services
-sudo systemctl daemon-reload
-sudo systemctl enable elasticsearch
-sudo systemctl start elasticsearch
-sudo systemctl enable kibana
-sudo systemctl start kibana
+systemctl daemon-reload
+systemctl enable elasticsearch
+systemctl start elasticsearch
+systemctl enable kibana
+systemctl start kibana
 
 # Setup auto-update script, for each 5 minutes the nodes checks if there is a new node created and add it to the seed_hosts
 cat << 'EOF' > /usr/local/bin/update_es_hosts.sh
@@ -111,9 +110,9 @@ SEED_HOSTS=$(aws ec2 describe-instances \
 CURRENT_CONFIG=$(grep 'discovery.seed_hosts' /etc/elasticsearch/elasticsearch.yml | awk -F'[][]' '{print $2}' | tr -d ' ')
 
 if [ "$SEED_HOSTS" != "$CURRENT_CONFIG" ]; then
-  sudo sed -i "s|discovery.seed_hosts: \[.*\]|discovery.seed_hosts: [$SEED_HOSTS]|" /etc/elasticsearch/elasticsearch.yml
+  sed -i "s|discovery.seed_hosts: \[.*\]|discovery.seed_hosts: [$SEED_HOSTS]|" /etc/elasticsearch/elasticsearch.yml
   echo "Updated discovery.seed_hosts to: $SEED_HOSTS"
-  sudo systemctl restart elasticsearch
+  systemctl restart elasticsearch
 fi
 EOF
 

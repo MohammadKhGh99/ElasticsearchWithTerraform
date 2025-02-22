@@ -127,6 +127,24 @@ resource "aws_instance" "public_instance" {
   subnet_id = aws_subnet.public_subnet.id
   instance_type = "t2.micro"
 
+  user_data = base64encode(<<-EOF
+      #!/bin/bash
+      chmod 600 /home/ubuntu/mgh.pem
+      EOF
+  )
+
+   provisioner "file" {
+    source      = "~/${var.key_pair}.pem"
+    destination = "/home/ubuntu/${var.key_pair}.pem"
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file("~/${var.key_pair}.pem")
+      host        = self.public_ip
+    }
+  }
+
   tags = {
     Terraform = true
     Name = "public_instance"
@@ -233,13 +251,6 @@ resource "aws_autoscaling_group" "data-nodes" {
   }
 }
 
-# resource "aws_autoscaling_lifecycle_hook" "es_termination" {
-#   name                   = "ElasticsearchNodeTermination"
-#   autoscaling_group_name = aws_autoscaling_group.data-nodes.name
-#   lifecycle_transition   = "autoscaling:EC2_INSTANCE_TERMINATING"
-#   heartbeat_timeout      = 300
-#   default_result         = "CONTINUE"
-# }
 
 # When one of the instances in the auto scaling group exceeded 70% of CPU usage it terminated and the auto scaling group make a new one
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
